@@ -11,7 +11,7 @@ on:
     - cron: '0 20 * * 5'
   push:
     branches:
-      - main
+      - main-nss
 
 jobs:
   build:
@@ -20,14 +20,14 @@ jobs:
     - name: Checkout your forked repository
       uses: actions/checkout@v4
       with:
-        ref: main
+        ref: main-nss
         fetch-depth: 0
 
     - name: Checkout upstream LiBwrt repository
       uses: actions/checkout@v4
       with:
         repository: LiBwrt/openwrt-6.x
-        ref: main
+        ref: main-nss
         path: openwrt-6.x-upstream
         fetch-depth: 0
 
