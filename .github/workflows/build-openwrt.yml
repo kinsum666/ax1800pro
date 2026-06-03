@@ -1,0 +1,102 @@
+name: Build OpenWrt for JDCloud AX1800
+
+on:
+  # 手动触发：方便你随时自定义编译
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
+  # 自动触发：当上游仓库的 main/master 分支有更新时，自动开始编译
+  schedule:
+    - cron: 0 20 * * 5  # 示例：每周五晚上8点（UTC时间）自动编译一次，你可以修改或删除
+  # 可选：当你推送代码到这个仓库的 main 分支时也触发编译
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout your forked repository
+      uses: actions/checkout@v4
+      with:
+        ref: main  # 指定你fork仓库的分支
+        fetch-depth: 0
+
+    - name: Checkout upstream LiBwrt repository
+      uses: actions/checkout@v4
+      with:
+        repository: LiBwrt/openwrt-6.x
+        ref: main  # 指定上游仓库的分支
+        path: openwrt-6.x-upstream
+        fetch-depth: 0
+
+    # 合并上游代码到你的仓库，并生成最终编译目录
+    - name: Prepare OpenWrt source
+      run: |
+        # 这里的关键是将上游的最新代码与你仓库的配置（如 .config, /files）合并
+        # 如果不做修改，可以直接复制上游源码
+        cp -r openwrt-6.x-upstream/* .
+        # 如果你在仓库根目录有自定义的 .config 文件，用它覆盖默认配置
+        if [ -f .config ]; then
+          cp .config .config
+        fi
+
+    # 更新软件包和安装编译依赖
+    - name: Update feeds
+      run: |
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    # 下载编译所需的依赖库
+    - name: Install build dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential libncurses5-dev gawk git libssl-dev gettext-base zlib1g-dev swig unzip time rsync python3 python3-dev
+
+    # 应用你的个性化配置文件 (关键步骤)
+    # 你需要在 GitHub 仓库中提前放置一个名为 'config-jdc-ax1800' 的文件
+    - name: Apply custom configuration
+      run: |
+        # 检查是否存在设备配置文件，如果存在，则用它生成 .config
+        if [ -f config-jdc-ax1800 ]; then
+          cp config-jdc-ax1800 .config
+        else
+          # 如果没有，你可以选择上游的目标配置
+          # 例如：echo "CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y" >> .config
+          echo "CONFIG_TARGET_qualcommax=y" >> .config
+          echo "CONFIG_TARGET_qualcommax_ipq60xx=y" >> .config
+          # 你需要根据上游的配置，为你的具体设备选择正确的选项
+          echo "CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y" >> .config
+        fi
+        make defconfig
+
+    # 开始编译
+    - name: Download package feeds
+      run: make download -j$(nproc)
+    - name: Build firmware
+      run: make -j$(nproc) V=s
+
+    # 生成并上传固件
+    - name: Prepare release artifact
+      run: |
+        mkdir -p artifacts
+        # 查找生成的 .bin 固件文件，并复制到 artifacts 目录
+        find bin/targets/ -name "*-squashfs-*" -type f -exec cp {} artifacts/ \;
+        cd artifacts
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: "nightly-build"
+        name: "Latest Firmware"
+        body: |
+          Automated build for JDCloud AX1800 (based on LiBwrt/openwrt-6.x).
+          Build triggered on ${{ github.event_name }}.
+        files: artifacts/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
